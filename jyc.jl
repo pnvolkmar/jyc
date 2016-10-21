@@ -13,14 +13,14 @@ using PyCall
 
 @pyimport scipy.spatial as spatial
 
-try
-    type Chull{T<:Real}
-        points::Array{Array{T,1},1}
-        vertices::Array{Int,1}
-        simplices::Array{Any,1}
-    end
-catch
-end
+# try
+#     type Chull{T<:Real}
+#         points::Array{Array{T,1},1}
+#         vertices::Array{Int,1}
+#         simplices::Array{Any,1}
+#     end
+# catch
+# end
 
 # function chull{T<:Real}(x::Array{T})
 #     py = spatial.ConvexHull(x)
@@ -36,12 +36,12 @@ end
 
 tol   = .1 # tolerance
 delta = .8  # Setting discount factor
-DataDir = "/Users/petervolkmar/Dropbox/JYC/Code/"
+DataDir = "/Users/petervolkmar/Dropbox/JYC/Code/version-control"
 cd(DataDir)
 # DataDir = "C:\\Users\\pnvolkmar\\Dropbox\\JYC\\Code\\"
 # include(DataDir * "LNGdata" * string(year) * ".jl")
 include("jyc_ex_data.jl")
-players = [p0, p0, p0, p0, p0, p0]
+players = [p0, p0, p0]
 
 
 # function jyc_ex(players)
@@ -59,16 +59,11 @@ end
 #####################################################
 
 # Technical setting for approximation
+del1 = 1 - delta
 n    = 8 # number of search gradients
 M    = 4 # number of points
 N    = length(players) # number of players
-del1 = 1-delta
-cen  = ones(1,N) ####################################### THIS IS WHERE THE CENTER IS
-cen = [3 3]
-# Setting price function
-function P(Q) # Prices can only change within a 10 percent band
-    return maximum([6-Q,0])
-end
+cen  = ones(Float32, 1, N) ####### THIS IS WHERE THE
 #####################################################
 # Hausdorff Distance - not always used...generally runs more slowly.
 #####################################################
@@ -92,9 +87,8 @@ end
 #####################################################
 tic();
 # Build a list if all possible player actions A = A_1 x A_2 x ... x A_N
-actions = zeros(1,N);
+actions = Array{Float32}(1,N);
 for (i,player) in enumerate(players)
-# i, player = 1, Angola
     actions = repeat(actions,inner = [M,1])
     for idx = 1:size(actions,1)
         q = player.Max*((idx-1)%M)/(M-1)
@@ -103,7 +97,7 @@ for (i,player) in enumerate(players)
 end
 
 # List of stage game payoffs for each action
-stagepay = zeros(size(actions));
+stagepay = Array{Float32}(size(actions));
 for (p, player) in enumerate(players)
     for i = 1:size(actions,1)
         # print(i); print(p); print(player); print("\n")
@@ -125,54 +119,37 @@ for p = 1:N
         end
     end
 end
-BR
-
-####bad additions
-stagepay = [4 4; 0 6; 6 0; 2 2]
-BR = [6 6; 2 6; 6 2; 2 2]
-N = 2
-###### end bad additions
-
 
 #####################################################
 # Setting up search alogoritms
 #####################################################
 
 
-H = randn(n, N) # H will be the gradients
-H = H./ (sqrt(sum(H.^2, 2))*ones(1,N))
+H = randn(Float32, (n, N))
+H = H./ (sqrt(sum(H.^2, 2))*ones(Float16, 1, N)
 # H = readdlm("H.csv",',',Float64) #THIS IS FOR COMPARISON PURPOSES ONLY.
-rad = ceil(maximum(stagepay))
+rad = Float32(ceil(maximum(stagepay)))
 
-##### bad additions
-rad = 5.0
-incr = 2*pi / n 
-H = Array{Float64}(0,2); cum = 0
-while cum < 2*pi
-    x = cos(cum)
-    y = sin(cum)
-    H = [H; x y]
-    cum = cum + incr 
-end 
-##### end bad additions
 
-Z = H*rad.+ones(n,1)*cen
+Z = H*rad.+ones(Float32, n, 1)*cen
 
 println("\n\nSPNE with $(N) Players")
 println("Outer Approximation")
 C=sum(Z.*H,2)
 L=n # this should really just be the number of gradient specified as 'n' above.
-G=H #Use subgradient same as search directions
+G=copy(H) #Use subgradient same as search directions
 wmin=minimum(BR,1)'
 iter=0
 tolZ=20.0
 tolZH = 20.0
 Zold=zeros(size(Z))
-len_stagepay = size(stagepay,1)
 rtouter = [tolZ]
 rtouterH = [tolZ]
 
-while tolZH>tol
+# function B_outer(stagepay,L,N,H, delta, C, BR,Z)
+while tolZH < tol
+    del1 = 1-delta
+    len_stagepay = size(stagepay,1)
     Cla=zeros(L,len_stagepay)
     Wla=zeros(N,L,len_stagepay)
     for l = 1:L
@@ -202,20 +179,6 @@ while tolZH>tol
     for l = 1:L
         Z[l,:]=Wla[:,l,I[l]]
     end
-
-    # if maximum(isnan(Z)) == true
-    #     println("This is the trouble Z")
-    #     println(Z[1,:])
-    #     println("This is the source of the trouble")
-    #     Zouter = copy(Zold)
-    #     println(Zouter[1,:])
-    #     println("along with this C")
-    #     println(Couter[1,:])
-    #     wminouter = copy(wmin)
-    #     Z = Zouter
-    #     tolZ, tolZH = tol, tol # just fail out of this loop
-    # end
-
     wmin=minimum(Z,1)'
     # Convergence
     tolZ  = maximum(abs(Z-Zold)./(1+abs(Zold)))
@@ -228,18 +191,18 @@ while tolZH>tol
     end
     Zold=copy(Z)
     iter=iter+1
-    # gc()
 end
+    # gc()
 toc()
 @printf("Convergence after %d iterations. \n \n", iter)
 
 outerpts = copy(Z)
 
-#   # ### # ### #     #    ##############################################
-## ##  ## #  ## # ##### ### #############################################
-## ## # # # # # #   ###    ##############################################
-## ## ##  # ##  # ##### #  ##############################################
-#   # ### # ### #     # ##  #############################################
+#   # ### # ### #     #    ##########################
+## ##  ## #  ## # ##### ### ###########################
+## ## # # # # # #   ###    ##############################
+## ## ##  # ##  # ##### #  ############################
+#   # ### # ### #     # ##  #########################
 print("Inner Approximation\n")
 
 tic()

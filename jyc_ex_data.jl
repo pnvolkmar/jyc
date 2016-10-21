@@ -1,3 +1,10 @@
+# CENTER IS
+
+# Setting price function
+function P(Q) # Prices can only change within a 10 percent band
+    return maximum([6-Q,0])
+end
+
 type Player
     Name::String
     Production::Float64

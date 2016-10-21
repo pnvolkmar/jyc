@@ -9,11 +9,9 @@ using PyCall
 using CHull
 using PyPlot
 using Distributions
-using JuMP
 DataDir = "/Users/petervolkmar/Dropbox/JYC/Code"
 cd(DataDir)
 include("data.jl")
-include("functions.jl")
 
 #####################################################
 # INPUTS
@@ -23,15 +21,15 @@ n     = 30  # # of gradients
 tol   = 1.0 # tolerance
 delta = .6  # Setting discount factor
 players = [Saudi_Arabia, Iraq, UAE]
-# chart_title = "Estimate for"
-# for i in 1:length(players)
-#     if i == length(players); chart_title *= " and ";
-#     elseif i > 1; chart_title *= ", ";
-#     else; chart_title *= " "; end;
-#
-#     chart_title *= players[i].Name
-# end
+chart_title = "Estimate for"
+for i in 1:length(players)
+    if i == length(players); chart_title *= " and ";
+    elseif i > 1; chart_title *= ", ";
+    else; chart_title *= " "; end;
 
+    chart_title *= players[i].Name
+end
+srand(1234)
 
 #####################################################
 # Settings
@@ -41,13 +39,11 @@ tic()
 # Technical setting for outer approximation
 M    = 4 # number of points
 N    = length(players)
-cen  = ones(1,N)
+cen  = ones(1,N) ####################################### THIS IS WHERE THE CENTER IS
+
 del1 = 1-delta
 
 # Setting price function
-# A = 341.4 # both A and B need to be decimals.
-# B = 3.075
-# for boot strapping
 A = randn() * 226.882 + 341.418
 B = randn() * 2.420 - 3.075
 production = 0.0
@@ -63,6 +59,25 @@ function P(Q)
 		return 0.0
 	end
 end
+
+#####################################################
+# Hausdorff Distance - not always used...generally runs more slowly.
+#####################################################
+
+function d(a, b)
+	sqrt(sum((a.-b).^2))
+end
+
+function hausdorff(A, B)
+	C = maximum([minimum([d(A[j,:],B[i,:]) for i = 1:size(B,2)]) for j = 1:size(A,2)])
+	D = maximum([minimum([d(A[i,:],B[j,:]) for i = 1:size(A,2)]) for j = 1:size(B,2)])
+    if C >= D
+    	return C
+    else
+    	return D
+    end
+end
+
 #####################################################
 # Building Vectors
 #####################################################
@@ -106,36 +121,86 @@ end
 #####################################################
 
 H = randn(n, N) # H will be the gradients
-# H = H./ (sqrt(sum(H.^2, 2))*ones(1,N))
-# # H = readdlm("H.csv",',',Float64) #THIS IS FOR COMPARISON PURPOSES ONLY.
-# rad = ceil(maximum(stagepay))
-# Z = H*rad.+ones(n,1)*cen
-#
-# println("Outer Approximation")
-# C=sum(Z.*H,2)
-# L=n # this should really just be the number of gradient specified as 'n' above.
-# G=H #Use subgradient same as search directions
-# wmin=minimum(BR,1)'
-# iter=0
-# tolZ=20.0
-# tolZH = 20.0
-# len_stagepay = size(stagepay,1)
-#
-# while tolZH>tol
-#     Zold = copy(Z)
-#     H,Z,C,wmin = B_o(stagepay,BR,H,Z,C,wmin,L,N,delta)
-#     tolZH = hausdorff(Z, Zold)
-#     if iter%5 == 0
-#         @printf("iteration: %d \t tolerance: %.2f \n", iter, tolZH)
-#     end
-#     Zold=copy(Z)
-#     iter=iter+1
-#     # gc()
-# end
-# toc()
-# @printf("Convergence after %d iterations. \n \n", iter)
-#
-# outerpts = copy(Z)
+H = H./ (sqrt(sum(H.^2, 2))*ones(1,N))
+# H = readdlm("H.csv",',',Float64) #THIS IS FOR COMPARISON PURPOSES ONLY.
+rad = ceil(maximum(stagepay))
+Z = H*rad.+ones(n,1)*cen
+
+println("Outer Approximation")
+C=sum(Z.*H,2)
+L=n # this should really just be the number of gradient specified as 'n' above.
+G=H #Use subgradient same as search directions
+wmin=minimum(BR,1)'
+iter=0
+tolZ=20.0
+tolZH = 20.0
+Zold=zeros(size(Z))
+len_stagepay = size(stagepay,1)
+rtouter = [tolZ]
+rtouterH = [tolZ]
+
+while tolZH>tol
+    Cla=zeros(L,len_stagepay)
+    Wla=zeros(N,L,len_stagepay)
+    for l = 1:L
+        for a = 1:len_stagepay
+            pay = stagepay[a,:]''
+            env = Gurobi.Env()
+            setparam!(env,"OutputFlag",0)
+			model = gurobi_model(env; name = "lp_01",
+                f = vec(-H[l,:]),
+                A = [H;-eye(N)],
+                b = vec([delta*C+del1*H*pay;-del1*BR[a,:]-delta*wmin]))
+			optimize(model);
+            #if no optimum is found, then cla=-inf
+            if get_status(model)!=:optimal
+            	Cla[l,a]=-10000000000
+            else
+	            Wla[:,l,a] = get_solution(model)
+	            Cla[l,a]= -get_objval(model)
+            end
+            # env = 0; gc(); # do we need more memory clean up?
+        end
+    end
+    # Couter = copy(C)
+    C = maximum(Cla,2)
+    I = mapslices(indmax, Cla, 2)[:]
+
+    for l = 1:L
+        Z[l,:]=Wla[:,l,I[l]]
+    end
+
+    # if maximum(isnan(Z)) == true
+    #     println("This is the trouble Z")
+    #     println(Z[1,:])
+    #     println("This is the source of the trouble")
+    #     Zouter = copy(Zold)
+    #     println(Zouter[1,:])
+    #     println("along with this C")
+    #     println(Couter[1,:])
+    #     wminouter = copy(wmin)
+    #     Z = Zouter
+    #     tolZ, tolZH = tol, tol # just fail out of this loop
+    # end
+
+    wmin=minimum(Z,1)'
+    # Convergence
+    tolZ  = maximum(abs(Z-Zold)./(1+abs(Zold)))
+    tolZH = hausdorff(Z, Zold)
+    # push!(rtouter,tolZ)
+    # push!(rtouterH, tolZH)
+
+    if iter%5 == 0
+        @printf("iteration: %d \t tolerance: %.2f \n", iter, tolZH)
+    end
+    Zold=copy(Z)
+    iter=iter+1
+    # gc()
+end
+toc()
+@printf("Convergence after %d iterations. \n \n", iter)
+
+outerpts = copy(Z)
 
 #   # ### # ### #     #    #####################################
 ## ##  ## #  ## # ##### ### ####################################
@@ -281,45 +346,45 @@ innerpts=copy(Z)
 # end
 
 k_inner = chull(innerpts);
-# k_outer = chull(outerpts);
+k_outer = chull(outerpts);
 
 ##   ##    #### ###    ### ### #################################
 # ##### ### ## # ## ### ## ### #################################
 # #   #    ##     #    ###     #################################
 # ## ## #  ## ### # ###### ### #################################
 ##   ## ##  # ### # ###### ### #################################
-# if size(Z,2) > 2
-#     fig = figure()
-#     ax  = fig[:gca](projection="3d")
-# else
-#     fig, ax = subplots()
-# end
-# if size(Z,2) > 2
-#     ax[:scatter](stagepay[:,1], stagepay[:,2], stagepay[:,3], zdir="z", c="r", marker="+")
-#     for simplex in k_inner.simplices
-#         ax[:plot](innerpts[simplex, 1], innerpts[simplex, 2], innerpts[simplex, 3], "y-")
-#     end
-#     # ax[:scatter](outerpts[:,1], outerpts[:,2], outerpts[:,3], zdir="z", c="y")
-#     for simplex in k_outer.simplices
-#         ax[:plot](outerpts[simplex, 1], outerpts[simplex, 2], outerpts[simplex, 3], "g-")
-#     end
-#     ax[:set_zlabel](players[3].Name)
-#     ax[:set_title]("Value Set of 3 Players")
-# else
-#     ax[:scatter](innerpts[:,1], innerpts[:,2], c="k")
-#     for simplex in k_inner.simplices
-#         ax[:plot](innerpts[simplex, 1], innerpts[simplex, 2], "g-")
-#     end
-#     ax[:scatter](outerpts[:,1], outerpts[:,2], c="k")
-#     for simplex in k_outer.simplices
-#         ax[:plot](outerpts[simplex, 1], outerpts[simplex, 2], "g--")
-#     end
-#     ax[:set_title]("Value Set of Both Players")
-# end
-#
-#
-# ax[:set_xlabel](players[1].Name)
-# ax[:set_ylabel](players[2].Name)
+if size(Z,2) > 2
+    fig = figure()
+    ax  = fig[:gca](projection="3d")
+else
+    fig, ax = subplots()
+end
+if size(Z,2) > 2
+    ax[:scatter](stagepay[:,1], stagepay[:,2], stagepay[:,3], zdir="z", c="r", marker="+")
+    for simplex in k_inner.simplices
+        ax[:plot](innerpts[simplex, 1], innerpts[simplex, 2], innerpts[simplex, 3], "y-")
+    end
+    # ax[:scatter](outerpts[:,1], outerpts[:,2], outerpts[:,3], zdir="z", c="y")
+    for simplex in k_outer.simplices
+        ax[:plot](outerpts[simplex, 1], outerpts[simplex, 2], outerpts[simplex, 3], "g-")
+    end
+    ax[:set_zlabel](players[3].Name)
+    ax[:set_title]("Value Set of 3 Players")
+else
+    ax[:scatter](innerpts[:,1], innerpts[:,2], c="k")
+    for simplex in k_inner.simplices
+        ax[:plot](innerpts[simplex, 1], innerpts[simplex, 2], "g-")
+    end
+    ax[:scatter](outerpts[:,1], outerpts[:,2], c="k")
+    for simplex in k_outer.simplices
+        ax[:plot](outerpts[simplex, 1], outerpts[simplex, 2], "g--")
+    end
+    ax[:set_title]("Value Set of Both Players")
+end
+
+
+ax[:set_xlabel](players[1].Name)
+ax[:set_ylabel](players[2].Name)
 
 # Mapping current produciton on to the value set:
 
@@ -330,29 +395,33 @@ val_current = current * P(Q_current)-[players[i].Cost(current[i]) for i in 1:N]
 max   = [player.Max for player in players]
 Q_max = sum(max)
 val_max = max * P(Q_max)-[players[i].Cost(max[i]) for i in 1:N]
-#
-# if size(Z,2) > 2
-#     ax[:scatter](val_current[1], val_current[2], val_current[3], zdir="z", c="k")
-#     ax[:scatter](val_max[1], val_max[2], val_max[3], zdir="z", c="r")
-# else
-#     ax[:scatter](val_current[1], val_current[2], c="k", marker = '^')
-#     ax[:scatter](val_max[1], val_max[2], c="r", marker = '^')
-# end
 
-good = in_hull(val_current, innerpts)
-print("Is the current value in hull?")
-print(good)
-
-red = in_hull(val_max, innerpts)
-print("Is the max value in hull?")
-print(red)
-
+if size(Z,2) > 2
+    ax[:scatter](val_current[1], val_current[2], val_current[3], zdir="z", c="k")
+    ax[:scatter](val_max[1], val_max[2], val_max[3], zdir="z", c="r")
+else
+    ax[:scatter](val_current[1], val_current[2], c="k", marker = '^')
+    ax[:scatter](val_max[1], val_max[2], c="r", marker = '^')
+end
 
 ##################################
 # Analysis
 ##################################
 
-
+using JuMP
+function in_hull(x, Z)
+    (R,C)=size(Z)
+    m = Model()
+    @variable(m, 0 <= lambda[j=1:R] <= 1)
+    @constraint(m, inhull[i=1:C], x[i] == sum{Z[j,i]*lambda[j], j = 1:R})
+    @constraint(m, sum(lambda) == 1)
+    status = solve(m)
+    if status == :Optimal
+        return(true)
+    else
+        return(false)
+    end
+end
 # Infeasible means not in the hull, Optimal means in the hull
 
 # good = np.sum(in_hull(innerpts,outerpts))

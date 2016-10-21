@@ -52,8 +52,8 @@ function B_o(
     )
     del1 = 1-delta
     len_stagepay = size(stagepay,1)
-    Cla=zeros(L,len_stagepay)
-    Wla=zeros(N,L,len_stagepay)
+    local Cla=zeros(L,len_stagepay)
+    local Wla=zeros(N,L,len_stagepay)
     for l = 1:L
         for a = 1:len_stagepay
             pay = stagepay[a,:]''
